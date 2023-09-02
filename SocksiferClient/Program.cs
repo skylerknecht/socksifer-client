@@ -246,7 +246,6 @@ namespace SocksiferClient
 
         private static void GetSocksRequests()
         {
-            Thread.Sleep(1000);
             while (SocketIOClient.Connected)
             {
                 Thread.Sleep(100);
