@@ -113,9 +113,9 @@ namespace SocksiferClient
                 }
                 else if (request.atype == 3)
                 {
-                    IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
-                    var ipAddress = hostEntry.AddressList[0];
-                    remote.Connect(ipAddress, request.port);
+                   // IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
+                   // var ipAddress = hostEntry.AddressList[0];
+                    remote.Connect(request.address, request.port);
                     socksConnections.Add(request.client_id, remote);
                     upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
                     rep = 0;
