@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.Remoting.Contexts;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
@@ -17,7 +18,6 @@ namespace SocksiferClient
     public class Program
     {
 
-        private static string ServerID;
         private static SocketIO SocketIOClient;
         private static Dictionary<string, Socket> socksConnections = new Dictionary<string, Socket>();
         private static Dictionary<string, Queue<byte[]>> upstreamBuffer = new Dictionary<string, Queue<byte[]>>();
@@ -25,36 +25,42 @@ namespace SocksiferClient
 
         public static void Main(string[] args)
         {
-            SocketIOClient = new SocketIO(args[0]);
-            SocketIOClient.On("socks", response =>
+            try
             {
-                SetServerID(response.GetValue<string>());
-            });
+                SocketIOClient = new SocketIO(args[0]);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Example: SocksiferClient.exe http://127.0.0.1:1337/");
+                Environment.Exit(0);
+            }
+
             SocketIOClient.On("socks_connect", response =>
             {
                 SocksConnect(response.GetValue<string>());
             });
+
             SocketIOClient.On("socks_upstream", response =>
             {
                 SocksUpStream(response.GetValue<string>());
             });
+
+
             SocketIOClient.ConnectAsync();
+
+            DateTime startTime = DateTime.Now;
+            while (!SocketIOClient.Connected)
+            {
+                TimeSpan elapsedTime = DateTime.Now - startTime;
+                if (elapsedTime.TotalSeconds >= 10)
+                {
+                    Environment.Exit(0);
+                }
+            }
+
             GetSocksRequests();
         }
 
-        private static void SetServerID(string serverIDRequest)
-        {
-            //{"server_id": "SIQcwzTByp"}
-            var data = JsonSerializer.Deserialize<Dictionary<string, string>>(serverIDRequest);
-            if (data.TryGetValue("server_id", out string serverIdValue))
-            {
-                ServerID = serverIdValue;
-            }
-            else
-            {
-                Environment.Exit(0);
-            }
-        }
 
         private class SocksConnectRequest
         {
@@ -98,10 +104,35 @@ namespace SocksiferClient
             int rep;
             try
             {
-                remote.Connect(request.address, request.port);
-                socksConnections.Add(request.client_id, remote);
-                upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
-                rep = 0;
+                if (request.atype == 1)
+                {
+                    remote.Connect(request.address, request.port);
+                    socksConnections.Add(request.client_id, remote);
+                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
+                    rep = 0;
+                }
+                else if (request.atype == 3)
+                {
+                    IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
+                    var ipAddress = hostEntry.AddressList[0];
+                    remote.Connect(ipAddress, request.port);
+                    socksConnections.Add(request.client_id, remote);
+                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
+                    rep = 0;
+                }
+                else if (request.atype == 4)
+                {
+                    IPAddress ipAddress = IPAddress.Parse(request.address);
+                    remote.Connect(ipAddress, request.port);
+                    socksConnections.Add(request.client_id, remote);
+                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
+                    rep = 0;
+                }
+                else
+                {
+                    rep = 8;
+                }
+
             }
             catch (SocketException e)
             {
@@ -171,7 +202,7 @@ namespace SocksiferClient
                     {
                         byte[] buffer = new byte[4096];
                         int bytesRead = remote.Receive(buffer);
-                        
+
                         if (bytesRead <= 0)
                         {
                             break;
@@ -212,18 +243,16 @@ namespace SocksiferClient
             upstreamBuffer[socksUpstreamRequest.client_id].Enqueue(Convert.FromBase64String(socksUpstreamRequest.data));
         }
 
+
         private static void GetSocksRequests()
         {
-            while (true) {
+            Thread.Sleep(1000);
+            while (SocketIOClient.Connected)
+            {
                 Thread.Sleep(100);
-                if (ServerID == null) { continue; }
-                var data = new
-                {
-                    server_id = ServerID
-                };
-                string dataSeralized = JsonSerializer.Serialize(data);
-                SocketIOClient.EmitAsync("socks_request_for_data", dataSeralized);
+                SocketIOClient.EmitAsync("socks_request_for_data");
             }
+            Environment.Exit(0);
         }
     }
 }
