@@ -32,12 +32,18 @@ namespace SocksiferClient
             catch (Exception ex)
             {
                 Console.WriteLine("Example: SocksiferClient.exe http://127.0.0.1:1337/");
-                Environment.Exit(0);
+                return;
             }
+
+            SocketIOClient.On("ping", response =>
+            {
+                Ping(response.GetValue<double>());
+            });
 
             SocketIOClient.On("socks_connect", response =>
             {
-                SocksConnect(response.GetValue<string>());
+                new Thread(() => SocksConnect(response.GetValue<string>())).Start();
+                
             });
 
             SocketIOClient.On("socks_upstream", response =>
@@ -54,11 +60,16 @@ namespace SocksiferClient
                 TimeSpan elapsedTime = DateTime.Now - startTime;
                 if (elapsedTime.TotalSeconds >= 10)
                 {
-                    Environment.Exit(0);
+                    return;
                 }
             }
 
             GetSocksRequests();
+        }
+
+        private static void Ping(double data)
+        {
+            SocketIOClient.EmitAsync("pong", data);
         }
 
 
@@ -251,7 +262,7 @@ namespace SocksiferClient
                 Thread.Sleep(100);
                 SocketIOClient.EmitAsync("socks_request_for_data");
             }
-            Environment.Exit(0);
+            return;
         }
     }
 }
