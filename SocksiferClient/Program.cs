@@ -31,7 +31,6 @@ namespace SocksiferClient
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Example: SocksiferClient.exe http://127.0.0.1:1337/");
                 return;
             }
 
@@ -43,7 +42,6 @@ namespace SocksiferClient
             SocketIOClient.On("socks_connect", response =>
             {
                 new Thread(() => SocksConnect(response.GetValue<string>())).Start();
-                
             });
 
             SocketIOClient.On("socks_upstream", response =>
@@ -54,17 +52,10 @@ namespace SocksiferClient
 
             SocketIOClient.ConnectAsync();
 
-            DateTime startTime = DateTime.Now;
-            while (!SocketIOClient.Connected)
+            while (true)
             {
-                TimeSpan elapsedTime = DateTime.Now - startTime;
-                if (elapsedTime.TotalSeconds >= 10)
-                {
-                    return;
-                }
+                Thread.Sleep(1000);
             }
-
-            GetSocksRequests();
         }
 
         private static void Ping(double data)
@@ -111,7 +102,7 @@ namespace SocksiferClient
             //{"atype": 1, "address": "127.0.0.1", "port": 80, "client_id": "SIQcwzTByp"}
             var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
             Socket remote = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            remote.ReceiveTimeout = 5000;
+            remote.ReceiveTimeout = 100;
             int rep;
             try
             {
@@ -124,8 +115,8 @@ namespace SocksiferClient
                 }
                 else if (request.atype == 3)
                 {
-                   // IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
-                   // var ipAddress = hostEntry.AddressList[0];
+                    // IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
+                    // var ipAddress = hostEntry.AddressList[0];
                     remote.Connect(request.address, request.port);
                     socksConnections.Add(request.client_id, remote);
                     upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
@@ -181,12 +172,15 @@ namespace SocksiferClient
             });
 
             SocketIOClient.EmitAsync("socks_connect_results", response);
-            new Thread(() =>
-            {
-                Stream(remote, request.client_id);
-            }).Start();
-        }
 
+            if (rep == 0)
+            {
+                new Thread(() =>
+                {
+                    Stream(remote, request.client_id);
+                }).Start();
+            }
+        }
 
         private class DownstreamResults
         {
@@ -252,17 +246,6 @@ namespace SocksiferClient
         {
             UpStreamRequest socksUpstreamRequest = JsonSerializer.Deserialize<UpStreamRequest>(upStreamRequest);
             upstreamBuffer[socksUpstreamRequest.client_id].Enqueue(Convert.FromBase64String(socksUpstreamRequest.data));
-        }
-
-
-        private static void GetSocksRequests()
-        {
-            while (SocketIOClient.Connected)
-            {
-                Thread.Sleep(100);
-                SocketIOClient.EmitAsync("socks_request_for_data");
-            }
-            return;
         }
     }
 }
