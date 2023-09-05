@@ -27,10 +27,11 @@ namespace SocksiferClient
         {
             try
             {
-                SocketIOClient = new SocketIO(args[0]);
+                SocketIOClient = new SocketIO(args[0]);         
             }
             catch (Exception ex)
             {
+                Console.WriteLine("Example: SocksiferClient.exe http://127.0.0.1:1337/");
                 return;
             }
 
