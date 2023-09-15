@@ -42,7 +42,7 @@ namespace SocksiferClient
 
             SocketIOClient.On("socks_connect", response =>
             {
-                new Thread(() => SocksConnect(response.GetValue<string>())).Start();
+                _ = SocksConnect(response.GetValue<string>());
             });
 
             SocketIOClient.On("socks_upstream", response =>
@@ -98,89 +98,50 @@ namespace SocksiferClient
             public string client_id { get; set; }
         }
 
-        private static void SocksConnect(string socksConnectRequest)
+        private static async Task SocksConnect(string socksConnectRequest)
         {
             //{"atype": 1, "address": "127.0.0.1", "port": 80, "client_id": "SIQcwzTByp"}
             var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
             Socket remote = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            remote.ReceiveTimeout = 100;
-            int rep;
-            try
+            SocketAsyncEventArgs connectEventArgs = new SocketAsyncEventArgs();
+            connectEventArgs.RemoteEndPoint = new DnsEndPoint(request.address, request.port);
+            connectEventArgs.Completed += (sender, args) =>
             {
-                if (request.atype == 1)
+                if (args.SocketError == SocketError.Success)
                 {
-                    remote.Connect(request.address, request.port);
                     socksConnections.Add(request.client_id, remote);
                     upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
-                    rep = 0;
-                }
-                else if (request.atype == 3)
-                {
-                    // IPHostEntry hostEntry = Dns.GetHostEntry(request.address);
-                    // var ipAddress = hostEntry.AddressList[0];
-                    remote.Connect(request.address, request.port);
-                    socksConnections.Add(request.client_id, remote);
-                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
-                    rep = 0;
-                }
-                else if (request.atype == 4)
-                {
-                    IPAddress ipAddress = IPAddress.Parse(request.address);
-                    remote.Connect(ipAddress, request.port);
-                    socksConnections.Add(request.client_id, remote);
-                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
-                    rep = 0;
+
+                    string bindAddr = ((IPEndPoint)remote.LocalEndPoint).Address.ToString();
+                    string bindPort = ((IPEndPoint)remote.LocalEndPoint).Port.ToString();
+
+
+                    var response = JsonSerializer.Serialize(new SocksConnectResults
+                    {
+                        atype = request.atype,
+                        rep = 0,
+                        bind_addr = bindAddr,
+                        bind_port = bindPort,
+                        client_id = request.client_id
+                    });
+
+                    SocketIOClient.EmitAsync("socks_connect_results", response);
+                    Stream(remote, request.client_id);
                 }
                 else
                 {
-                    rep = 8;
+                    var response = JsonSerializer.Serialize(new SocksConnectResults
+                    {
+                        atype = request.atype,
+                        rep = 0,
+                        bind_addr = null,
+                        bind_port = null,
+                        client_id = request.client_id
+                    });
+                    SocketIOClient.EmitAsync("socks_connect_results", response);
                 }
-
-            }
-            catch (SocketException e)
-            {
-                switch (e.ErrorCode)
-                {
-                    case (int)SocketError.AccessDenied:
-                        rep = 2;
-                        break;
-                    case (int)SocketError.NetworkUnreachable:
-                        rep = 3;
-                        break;
-                    case (int)SocketError.HostUnreachable:
-                        rep = 4;
-                        break;
-                    case (int)SocketError.ConnectionRefused:
-                        rep = 5;
-                        break;
-                    default:
-                        rep = 6;
-                        break;
-                }
-            }
-
-            string bindAddr = (rep != 0) ? null : ((IPEndPoint)remote.LocalEndPoint).Address.ToString();
-            string bindPort = (rep != 0) ? null : ((IPEndPoint)remote.LocalEndPoint).Port.ToString();
-
-
-            var response = JsonSerializer.Serialize(new SocksConnectResults
-            {
-                atype = request.atype,
-                rep = rep,
-                bind_addr = bindAddr,
-                bind_port = bindPort,
-                client_id = request.client_id
-            });
-
-            SocketIOClient.EmitAsync("socks_connect_results", response);
-
-            if (rep == 0)
-            {
-                new Thread(() =>
-                {
-                    Stream(remote, request.client_id);
-                }).Start();
-            }
+            };
+            remote.ConnectAsync(connectEventArgs);
         }
 
         private class DownstreamResults
@@ -195,44 +156,28 @@ namespace SocksiferClient
 
         private static void Stream(Socket remote, string client_id)
         {
-            while (true)
+
+            byte[] downstream_data = new byte[4096];
+            SocketAsyncEventArgs e = new SocketAsyncEventArgs();
+            e.SetBuffer(downstream_data, 0, downstream_data.Length);
+            e.Completed += (sender2, args2) =>
             {
-                if (remote.Poll(0, SelectMode.SelectWrite) && upstreamBuffer[client_id].Count > 0)
+                if (e.SocketError == SocketError.Success && e.BytesTransferred > 0)
                 {
-                    byte[] data = upstreamBuffer[client_id].Dequeue();
-                    remote.Send(data);
-                }
-                if (remote.Poll(0, SelectMode.SelectRead))
-                {
-                    try
+                    string socks_downstream_result = JsonSerializer.Serialize(new DownstreamResults
                     {
-                        byte[] buffer = new byte[4096];
-                        int bytesRead = remote.Receive(buffer);
+                        data = Convert.ToBase64String(e.Buffer, 0, e.BytesTransferred),
+                        client_id = client_id,
+                    });
 
-                        if (bytesRead <= 0)
-                        {
-                            break;
-                        }
-
-                        byte[] downstream_data = new byte[bytesRead];
-                        Array.Copy(buffer, downstream_data, bytesRead);
-
-                        string socks_downstream_result = JsonSerializer.Serialize(new DownstreamResults
-                        {
-                            data = Convert.ToBase64String(downstream_data),
-                            client_id = client_id,
-                        });
-
-                        SocketIOClient.EmitAsync("socks_downstream_results", socks_downstream_result);
-                    }
-                    catch
-                    {
-                        break;
-                    }
+                    SocketIOClient.EmitAsync("socks_downstream_results", socks_downstream_result);
+                    Array.Clear(downstream_data, 0, downstream_data.Length);
+                    remote.ReceiveAsync(e);
                 }
-            }
+            };
+            remote.ReceiveAsync(e);
         }
-
+      
         private class UpStreamRequest
         {
 
@@ -246,7 +191,7 @@ namespace SocksiferClient
         private static void SocksUpStream(string upStreamRequest)
         {
             UpStreamRequest socksUpstreamRequest = JsonSerializer.Deserialize<UpStreamRequest>(upStreamRequest);
-            upstreamBuffer[socksUpstreamRequest.client_id].Enqueue(Convert.FromBase64String(socksUpstreamRequest.data));
+            socksConnections[socksUpstreamRequest.client_id].Send(Convert.FromBase64String(socksUpstreamRequest.data));
         }
     }
 }
