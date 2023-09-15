@@ -1,12 +1,7 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.Remoting.Contexts;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -20,8 +15,6 @@ namespace SocksiferClient
 
         private static SocketIO SocketIOClient;
         private static Dictionary<string, Socket> socksConnections = new Dictionary<string, Socket>();
-        private static Dictionary<string, Queue<byte[]>> upstreamBuffer = new Dictionary<string, Queue<byte[]>>();
-
 
         public static void Main(string[] args)
         {
@@ -110,7 +103,6 @@ namespace SocksiferClient
                 if (args.SocketError == SocketError.Success)
                 {
                     socksConnections.Add(request.client_id, remote);
-                    upstreamBuffer.Add(request.client_id, new Queue<byte[]>());
 
                     string bindAddr = ((IPEndPoint)remote.LocalEndPoint).Address.ToString();
                     string bindPort = ((IPEndPoint)remote.LocalEndPoint).Port.ToString();
@@ -171,7 +163,6 @@ namespace SocksiferClient
                     });
 
                     SocketIOClient.EmitAsync("socks_downstream_results", socks_downstream_result);
-                    Array.Clear(downstream_data, 0, downstream_data.Length);
                     remote.ReceiveAsync(e);
                 }
             };
@@ -190,8 +181,13 @@ namespace SocksiferClient
 
         private static void SocksUpStream(string upStreamRequest)
         {
-            UpStreamRequest socksUpstreamRequest = JsonSerializer.Deserialize<UpStreamRequest>(upStreamRequest);
-            socksConnections[socksUpstreamRequest.client_id].Send(Convert.FromBase64String(socksUpstreamRequest.data));
+            try
+            {
+                UpStreamRequest socksUpstreamRequest = JsonSerializer.Deserialize<UpStreamRequest>(upStreamRequest);
+                socksConnections[socksUpstreamRequest.client_id].Send(Convert.FromBase64String(socksUpstreamRequest.data));
+            } catch (Exception e) { 
+                Console.WriteLine(e.ToString());
+            }
         }
     }
 }
