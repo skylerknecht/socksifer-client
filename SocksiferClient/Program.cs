@@ -125,7 +125,7 @@ namespace SocksiferClient
                     var response = JsonSerializer.Serialize(new SocksConnectResults
                     {
                         atype = request.atype,
-                        rep = 0,
+                        rep = 1,
                         bind_addr = null,
                         bind_port = null,
                         client_id = request.client_id
